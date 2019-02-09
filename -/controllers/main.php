@@ -2,55 +2,115 @@
 
 class Main extends \Controller
 {
+    private $sourceEnv;
+
+    private $targetEnv;
+
+    public function __create()
+    {
+        if ($direction = $this->data('direction')) {
+            if ($envs = $this->parseDirection($direction)) {
+                list($sourceEnv, $targetEnv) = $envs;
+
+                $this->sourceEnv = $sourceEnv;
+                $this->targetEnv = $targetEnv;
+            }
+        } else {
+            $sourceEnvName = $this->data('source'); // todo [app:]env
+            $targetEnvName = $this->data('target'); // todo [app:]env
+
+            if ($sourceEnv = \ewma\apps\models\Env::where('name', $sourceEnvName)->first()) {
+                $this->sourceEnv = $sourceEnv;
+            }
+
+            if ($targetEnv = \ewma\apps\models\Env::where('name', $targetEnvName)->first()) {
+                $this->targetEnv = $targetEnv;
+            }
+        }
+
+        if (null === $this->sourceEnv) {
+            $this->lock('not defined source');
+        }
+
+        if (null === $this->targetEnv) {
+            $this->lock('not defined target');
+        }
+    }
+
+    private function parseDirection($direction)
+    {
+        $exploded = explode('2', $direction);
+
+        if (count($exploded) == 2) {
+            $sourceEnvShortName = $exploded[0];
+            $targetEnvShortName = $exploded[1];
+
+            $sourceEnv = \ewma\apps\models\Env::where('short_name', $sourceEnvShortName)->first();
+            $targetEnv = \ewma\apps\models\Env::where('short_name', $targetEnvShortName)->first();
+
+            if ($sourceEnv && $targetEnv) {
+                return [$sourceEnv, $targetEnv];
+            }
+        }
+    }
+
     public function run()
     {
         start_time($this->_nodeId());
 
-        $source = $this->data('source');
-        $target = $this->data('target');
+        $sourceEnv = $this->sourceEnv;
+        $targetEnv = $this->targetEnv;
 
-        $sourceServer = remote($source);
-        $targetServer = remote($target);
+        $tables = l2a($this->data('tables'));
+        diff($tables, '');
 
-        if ($sourceServer && $targetServer) {
-            $exportCommand = $this->getExportCommand($sourceServer, $this->data('source_database') ?: 'default');
-            $importCommand = $this->getImportCommand($targetServer, $this->data('target_database') ?: 'default');
+        $sourceRemote = remote($sourceEnv->name);
+        $targetRemote = remote($targetEnv->name);
 
-            $sshConfig = dataSets()->get('config/ssh');
+        if ($sourceRemote && $targetRemote && count($tables)) {
+            $this->log($sourceEnv->name . ' -> ' . $targetEnv->name . ': ' . a2l($tables));
 
-            $ssh = ap($sshConfig[$source], $target);
+            $exportCommand = $this->getExportCommand($sourceRemote, $this->data('source_database') ?: 'default');
+            $importCommand = $this->getImportCommand($targetRemote, $this->data('target_database') ?: 'default');
 
-            $command = false;
+            $currentEnv = \ewma\apps\models\Env::where('app_id', 0)->where('name', $this->_env())->first();
+            $currentServer = $currentEnv->server;
 
-            if ($ssh === true) {
-                $command = $exportCommand . ' | ' . $importCommand;
-            } else {
-                if ($ssh) {
-                    if ($this->_env($source)) {
-                        $command = $exportCommand . ' | ssh ' . $ssh . ' ' . $importCommand;
-                    }
+            $sourceServer = $sourceEnv->server;
+            $targetServer = $targetEnv->server;
 
-                    if ($this->_env($target)) {
-                        $command = 'ssh ' . $ssh . ' ' . $exportCommand . ' | ' . $importCommand;
-                    }
+            $errors = [];
+
+            if ($sourceServer != $currentServer) {
+                if ($sshConnection = ewmas()->getSshConnectionString($sourceServer)) {
+                    $exportCommand = 'ssh ' . $sshConnection . ' ' . $exportCommand;
                 } else {
-                    $ssh = ap($sshConfig[$target], $source);
+                    $errors[] = 'has not ssh connection to source server';
+                }
+            }
 
-                    if ($ssh) {
-                        $command = 'ssh ' . $ssh . ' ' . $exportCommand . ' | ' . $importCommand;
-                    }
+            if ($targetServer != $currentServer) {
+                if ($sshConnection = ewmas()->getSshConnectionString($targetServer)) {
+                    $importCommand = 'ssh ' . $sshConnection . ' ' . $importCommand;
+                } else {
+                    $errors[] = 'has not ssh connection to target server';
                 }
             }
 
             $result = [];
 
-            if ($command) {
-                exec($command, $result);
+            if (!$errors) {
+                $command = $exportCommand . ' | ' . $importCommand;
+
+                if ($command) {
+                    exec($command, $result);
+                }
             }
 
             return [
-                'source'   => $source,
-                'target'   => $target,
+                'errors'   => $errors,
+                'source'   => $sourceEnv,
+                'target'   => $targetEnv,
                 'command'  => $command,
                 'duration' => end_time($this->_nodeId(), true),
                 'result'   => $result
@@ -58,16 +118,16 @@ class Main extends \Controller
         }
     }
 
-    private function getExportCommand(\ewma\remoteCall\Remote $server, $database)
+    private function getExportCommand(\ewma\remoteCall\Remote $remote, $database)
     {
-        $dbConfig = $server->call('/ -:_appConfig:databases/' . $database);
+        $dbConfig = $remote->call('/ -:_appConfig:databases/' . $database);
 
         return 'mysqldump -u ' . $dbConfig['user'] . ' -p' . $dbConfig['pass'] . ' ' . $dbConfig['name'] . ' ' . implode(' ', l2a($this->data('tables')));
     }
 
-    private function getImportCommand(\ewma\remoteCall\Remote $server, $database)
+    private function getImportCommand(\ewma\remoteCall\Remote $remote, $database)
     {
-        $dbConfig = $server->call('/ -:_appConfig:databases/' . $database);
+        $dbConfig = $remote->call('/ -:_appConfig:databases/' . $database);
 
         return 'mysql -u ' . $dbConfig['user'] . ' -p' . $dbConfig['pass'] . ' ' . $dbConfig['name'];
     }
