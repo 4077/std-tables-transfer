@@ -19,11 +19,11 @@ class Main extends \Controller
             $sourceEnvName = $this->data('source'); // todo [app:]env
             $targetEnvName = $this->data('target'); // todo [app:]env
 
-            if ($sourceEnv = \ewma\apps\models\Env::where('name', $sourceEnvName)->first()) {
+            if ($sourceEnv = \ewma\apps\models\Env::where('app_id', 0)->where('name', $sourceEnvName)->first()) {
                 $this->sourceEnv = $sourceEnv;
             }
 
-            if ($targetEnv = \ewma\apps\models\Env::where('name', $targetEnvName)->first()) {
+            if ($targetEnv = \ewma\apps\models\Env::where('app_id', 0)->where('name', $targetEnvName)->first()) {
                 $this->targetEnv = $targetEnv;
             }
         }
@@ -45,8 +45,8 @@ class Main extends \Controller
             $sourceEnvShortName = $exploded[0];
             $targetEnvShortName = $exploded[1];
 
-            $sourceEnv = \ewma\apps\models\Env::where('short_name', $sourceEnvShortName)->first();
-            $targetEnv = \ewma\apps\models\Env::where('short_name', $targetEnvShortName)->first();
+            $sourceEnv = \ewma\apps\models\Env::where('app_id', 0)->where('short_name', $sourceEnvShortName)->first();
+            $targetEnv = \ewma\apps\models\Env::where('app_id', 0)->where('short_name', $targetEnvShortName)->first();
 
             if ($sourceEnv && $targetEnv) {
                 return [$sourceEnv, $targetEnv];
